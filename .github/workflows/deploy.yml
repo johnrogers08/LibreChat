@@ -1,41 +1,69 @@
-name: Deploy_GHRunner_Linux_ACI
+name: Azure Container Apps Deploy
 
 on:
+  workflow_run:
+    workflows:
+      - Azure Container Registry Build
+    types:
+      - completed
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Image tag to deploy from Azure Container Registry
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 env:
-  RUNNER_VERSION: 2.293.0
-  ACI_RESOURCE_GROUP: 'Demo-ACI-GitHub-Runners-RG'
-  ACI_NAME: 'gh-runner-linux-01'
-  DNS_NAME_LABEL: 'gh-lin-01'
-  GH_OWNER: ${{ github.repository_owner }}
-  GH_REPOSITORY: 'LibreChat' #Change here to deploy self hosted runner ACI to another repo.
+  AZURE_CONTAINER_REGISTRY_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY_NAME }}
+  AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  IMAGE_NAME: ${{ vars.AZURE_CONTAINER_IMAGE_NAME || 'librechat' }}
 
 jobs:
-  deploy-gh-runner-aci:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'dev'
+      )
     runs-on: ubuntu-latest
     steps:
-      # checkout the repo
-      - name: 'Checkout GitHub Action'
-        uses: actions/checkout@v5
-
-      - name: 'Login via Azure CLI'
+      - name: Login via Azure CLI
         uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: 'Deploy to Azure Container Instances'
-        uses: 'azure/aci-deploy@v1'
-        with:
-          resource-group: ${{ env.ACI_RESOURCE_GROUP }}
-          image: ${{ secrets.REGISTRY_LOGIN_SERVER }}/pwd9000-github-runner-lin:${{ env.RUNNER_VERSION }}
-          registry-login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-          registry-username: ${{ secrets.REGISTRY_USERNAME }}
-          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
-          name: ${{ env.ACI_NAME }}
-          dns-name-label: ${{ env.DNS_NAME_LABEL }}
-          environment-variables: GH_TOKEN=${{ secrets.PAT_TOKEN }} GH_OWNER=${{ env.GH_OWNER }} GH_REPOSITORY=${{ env.GH_REPOSITORY }}
-          location: 'eastus'
+      - name: Resolve Azure Container Registry login server
+        id: acr
+        run: |
+          set -euo pipefail
+          login_server="$(az acr show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query loginServer -o tsv)"
+          echo "login_server=$login_server" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image tag
+        id: image
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
+            tag="${{ inputs.image_tag }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            tag="${{ github.event.workflow_run.head_sha }}"
+            tag="${tag::12}"
+          else
+            tag="dev-latest"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy latest LibreChat revision
+        env:
+          IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          az containerapp update \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --image "$IMAGE"

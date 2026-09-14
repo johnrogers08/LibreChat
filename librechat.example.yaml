@@ -742,6 +742,46 @@ endpoints:
   #   headers:
   #     cf-aig-metadata: '{"user_email":"{{LIBRECHAT_USER_EMAIL}}","app":"librechat"}'
 
+  # OpenAI endpoint configuration
+  # Use this to pin the built-in OpenAI endpoint to specific models.
+  # openAI:
+  #   titleConvo: true
+  #   titleModel: 'gpt-4o-mini'
+  #   modelDisplayLabel: 'OpenAI'
+  #   models:
+  #     default:
+  #       - 'gpt-4o'
+  #       - 'gpt-4o-mini'
+  #       - 'o3-mini'
+  #     fetch: false
+
+  # Azure OpenAI + Azure AI Foundry endpoint configuration
+  # Use `instanceName` + `deploymentName` for classic Azure OpenAI deployments,
+  # or `baseURL` + `serverless: true` for Azure AI Foundry / serverless inference deployments.
+  # azureOpenAI:
+  #   titleConvo: true
+  #   titleModel: 'gpt-4o'
+  #   assistants: true
+  #   groups:
+  #     - group: 'azure-openai-eastus'
+  #       apiKey: '${AZURE_OPENAI_API_KEY}'
+  #       instanceName: 'my-openai-eastus'
+  #       deploymentName: 'gpt-4o'
+  #       version: '2024-10-21'
+  #       models:
+  #         gpt-4o: true
+  #         gpt-4o-mini:
+  #           deploymentName: 'gpt-4o-mini'
+  #           version: '2024-10-21'
+  #     - group: 'azure-ai-foundry'
+  #       apiKey: '${AZURE_AI_FOUNDRY_API_KEY}'
+  #       baseURL: 'https://my-project.services.ai.azure.com/models'
+  #       version: '2024-05-01-preview'
+  #       serverless: true
+  #       models:
+  #         grok-3: true
+  #         DeepSeek-R1: true
+
   # Anthropic endpoint configuration with Vertex AI support
   # Use this to run Anthropic Claude models through Google Cloud Vertex AI
   # anthropic:
