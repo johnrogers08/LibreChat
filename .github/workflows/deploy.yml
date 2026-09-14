@@ -6,146 +6,95 @@ on:
       - Azure Container Registry Build
     types:
       - completed
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Image tag to deploy from Azure Container Registry
-        required: false
+        description: Full immutable Git commit SHA image tag to deploy
+        required: true
         type: string
 
 permissions:
   contents: read
+  id-token: write
+
+concurrency:
+  group: azure-container-apps-production
+  cancel-in-progress: false
 
 env:
-  AZURE_CONTAINER_REGISTRY_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY_NAME }}
-  AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
   AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-  IMAGE_NAME: ${{ vars.AZURE_CONTAINER_IMAGE_NAME || 'librechat' }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+  AZURE_RESOURCE_SUFFIX: ${{ vars.AZURE_RESOURCE_SUFFIX }}
 
 jobs:
   deploy:
     if: >
       github.event_name == 'workflow_dispatch' ||
       (
-        github.event.workflow_run.name == 'Azure Container Registry Build' &&
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'dev'
+        github.event.workflow_run.head_branch == 'main'
       )
+    environment: production
     runs-on: ubuntu-latest
     steps:
-      - name: Login via Azure CLI
+      - uses: actions/checkout@v5
+
+      - name: Login to Azure using GitHub OIDC
         uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Resolve Azure Container Registry login server
-        id: acr
-        run: |
-          set -euo pipefail
-          login_server="$(az acr show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query loginServer -o tsv)"
-          echo "login_server=$login_server" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve image tag
+      - name: Resolve immutable image tag
         id: image
         env:
-          MANUAL_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || '' }}
+          MANUAL_IMAGE_TAG: ${{ inputs.image_tag }}
+          WORKFLOW_IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          input_tag="$MANUAL_IMAGE_TAG"
-          input_tag="$(printf '%s' "$input_tag" | xargs)"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$input_tag" ]; then
-            tag="$input_tag"
-          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            tag="${{ github.event.workflow_run.head_sha }}"
-            tag="${tag::12}"
-          else
-            tag="dev-latest"
-          fi
+          tag="${MANUAL_IMAGE_TAG:-$WORKFLOW_IMAGE_TAG}"
+          [[ "$tag" =~ ^[0-9a-f]{40}$ ]] || { echo 'Image tag must be a full commit SHA.' >&2; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Azure Container App exists
+      - name: Validate infrastructure template
+        run: az bicep build --file infra/main.bicep --outfile /tmp/main.json
+
+      - name: Deploy infrastructure and release revision
+        id: deployment
         run: |
           set -euo pipefail
-          if ! output="$(
-            az containerapp show \
-              --name "$AZURE_CONTAINER_APP_NAME" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --output none \
-              2>&1
-          )"; then
-            case "$output" in
-              *"ResourceNotFound"*|*"could not be found"*)
-                echo "Azure Container App $AZURE_CONTAINER_APP_NAME was not found in resource group $AZURE_RESOURCE_GROUP." >&2
-                echo "Provision the Container App before running this deployment workflow." >&2
-                exit 1
-                ;;
-              *)
-                printf '%s\n' "$output" >&2
-                exit 1
-                ;;
-            esac
-          fi
+          az deployment group create \
+            --name "librechat-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters \
+              location="$AZURE_LOCATION" \
+              resourceSuffix="$AZURE_RESOURCE_SUFFIX" \
+              imageTag="${{ steps.image.outputs.tag }}" \
+              deployApp=true \
+              githubRepository="$GITHUB_REPOSITORY" \
+              mongoUri="${{ secrets.MONGO_URI }}" \
+              credsKey="${{ secrets.CREDS_KEY }}" \
+              credsIv="${{ secrets.CREDS_IV }}" \
+              jwtSecret="${{ secrets.JWT_SECRET }}" \
+            --query properties.outputs.containerAppUrl.value -o tsv > app-url.txt
+          echo "url=$(cat app-url.txt)" >> "$GITHUB_OUTPUT"
 
-      - name: Configure managed identity for image pulls
+      - name: Verify deployed health endpoint
         env:
-          REGISTRY_SERVER: ${{ steps.acr.outputs.login_server }}
+          APP_URL: ${{ steps.deployment.outputs.url }}
         run: |
           set -euo pipefail
-          az containerapp identity assign \
-            --name "$AZURE_CONTAINER_APP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --system-assigned \
-            --output none
-          principal_file="$(mktemp)"
-          acr_file="$(mktemp)"
-          az containerapp show \
-            --name "$AZURE_CONTAINER_APP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query identity.principalId \
-            -o tsv > "$principal_file" &
-          principal_pid=$!
-          az acr show \
-            --name "$AZURE_CONTAINER_REGISTRY_NAME" \
-            --query id \
-            -o tsv > "$acr_file" &
-          acr_pid=$!
-          wait "$principal_pid"
-          wait "$acr_pid"
-          principal_id="$(cat "$principal_file")"
-          acr_id="$(cat "$acr_file")"
-          rm -f "$principal_file" "$acr_file"
-          assignment_count="$(az role assignment list --assignee-object-id "$principal_id" --scope "$acr_id" --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv)"
-          if [ "$assignment_count" = "0" ]; then
-            az role assignment create \
-              --assignee-object-id "$principal_id" \
-              --assignee-principal-type ServicePrincipal \
-              --role AcrPull \
-              --scope "$acr_id" \
-              --output none
-          fi
-          az containerapp registry set \
-            --name "$AZURE_CONTAINER_APP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --server "$REGISTRY_SERVER" \
-            --identity system \
-            --output none
-
-      - name: Verify image tag exists in Azure Container Registry
-        run: |
-          set -euo pipefail
-          tag_count="$(az acr repository show-tags --name "$AZURE_CONTAINER_REGISTRY_NAME" --repository "$IMAGE_NAME" --query "[?@=='${{ steps.image.outputs.tag }}'] | length(@)" -o tsv)"
-          if [ "$tag_count" = "0" ]; then
-            echo "Image tag ${{ steps.image.outputs.tag }} was not found for repository $IMAGE_NAME in $AZURE_CONTAINER_REGISTRY_NAME." >&2
-            exit 1
-          fi
-
-      - name: Deploy latest LibreChat revision
-        env:
-          IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
-        run: |
-          set -euo pipefail
-          az containerapp update \
-            --name "$AZURE_CONTAINER_APP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --image "$IMAGE"
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error --max-time 10 "$APP_URL/health"; then exit 0; fi
+            echo "Health check ${attempt}/30 failed; retrying."
+            sleep 10
+          done
+          exit 1
