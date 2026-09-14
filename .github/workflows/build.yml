@@ -61,8 +61,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: Dockerfile.multi
-          target: api-build
+          file: Dockerfile
           push: true
           tags: |
             ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
