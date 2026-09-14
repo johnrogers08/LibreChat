@@ -72,6 +72,13 @@ librechat:
   #   registration:
   #     socialLogins: ["discord", "facebook", "github", "google", "openid"] 
   #   endpoints:
+  #     openAI:
+  #       titleModel: "gpt-4o-mini"
+  #       models:
+  #         default:
+  #           - "gpt-4o"
+  #           - "gpt-4o-mini"
+  #         fetch: false
   #     azureOpenAI:
   #      # Endpoint-level configuration
   #      titleModel: "gpt-4o"
@@ -88,6 +95,13 @@ librechat:
   #           # Model-level configuration
   #           models:
   #             gpt-4o: true
+  #         - group: "azure-ai-foundry"
+  #           apiKey: "${AZURE_AI_FOUNDRY_API_KEY}"
+  #           baseURL: "https://my-project.services.ai.azure.com/models"
+  #           version: "2024-05-01-preview"
+  #           serverless: true
+  #           models:
+  #             grok-3: true
   #     custom:
   #       # OpenRouter.ai
   #       - name: "OpenRouter"
