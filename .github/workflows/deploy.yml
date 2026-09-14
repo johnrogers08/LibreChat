@@ -67,12 +67,24 @@ jobs:
       - name: Verify Azure Container App exists
         run: |
           set -euo pipefail
-          if ! az containerapp show \
-            --name "$AZURE_CONTAINER_APP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null; then
-            echo "Azure Container App $AZURE_CONTAINER_APP_NAME was not found in resource group $AZURE_RESOURCE_GROUP." >&2
-            echo "Provision the Container App before running this deployment workflow." >&2
-            exit 1
+          if ! output="$(
+            az containerapp show \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --output none \
+              2>&1
+          )"; then
+            case "$output" in
+              *"ResourceNotFound"*|*"could not be found"*)
+                echo "Azure Container App $AZURE_CONTAINER_APP_NAME was not found in resource group $AZURE_RESOURCE_GROUP." >&2
+                echo "Provision the Container App before running this deployment workflow." >&2
+                exit 1
+                ;;
+              *)
+                printf '%s\n' "$output" >&2
+                exit 1
+                ;;
+            esac
           fi
 
       - name: Deploy latest LibreChat revision
