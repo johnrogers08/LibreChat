@@ -12,6 +12,12 @@ param imageTag string = 'bootstrap'
 @description('Whether to create or update the Container App. Set false for the initial foundation bootstrap.')
 param deployApp bool = true
 
+@description('Whether to create app managed-identity role assignments. Set false for CI deployments after bootstrap.')
+param assignAppRoles bool = true
+
+@description('Whether to create GitHub deployment-identity role assignments. Set false for CI deployments after bootstrap.')
+param assignDeploymentRoles bool = true
+
 @description('GitHub repository allowed to obtain Azure deployment tokens, in owner/repository form.')
 param githubRepository string
 
@@ -167,7 +173,7 @@ resource files 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-0
   properties: { publicAccess: 'None' }
 }
 
-resource appAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource appAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignAppRoles) {
   name: guid(registry.id, appIdentity.properties.principalId, 'AcrPull')
   scope: registry
   properties: {
@@ -177,7 +183,7 @@ resource appAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource appBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource appBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignAppRoles) {
   name: guid(storage.id, appIdentity.properties.principalId, 'StorageBlobDataContributor')
   scope: storage
   properties: {
@@ -187,7 +193,7 @@ resource appBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01'
   }
 }
 
-resource appSecretReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource appSecretReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignAppRoles) {
   name: guid(vault.id, appIdentity.properties.principalId, 'KeyVaultSecretsUser')
   scope: vault
   properties: {
@@ -197,12 +203,22 @@ resource appSecretReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
-resource githubContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource githubContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignDeploymentRoles) {
   name: guid(resourceGroup().id, deploymentIdentity.properties.principalId, 'Contributor')
   properties: {
     principalId: deploymentIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')
+  }
+}
+
+resource githubAcrPush 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignDeploymentRoles) {
+  name: guid(registry.id, deploymentIdentity.properties.principalId, 'AcrPush')
+  scope: registry
+  properties: {
+    principalId: deploymentIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8311e382-0749-4cb8-b61a-304f252e45ec')
   }
 }
 
@@ -220,6 +236,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
       ingress: { external: true targetPort: 3080 transport: 'auto' allowInsecure: false }
       registries: [{ server: registry.properties.loginServer identity: appIdentity.id }]
       secrets: [
+        { name: 'librechat-config' value: loadTextContent('librechat.azure.yaml') }
         { name: 'mongo-uri' keyVaultUrl: mongoUriSecret.properties.secretUriWithVersion identity: appIdentity.id }
         { name: 'creds-key' keyVaultUrl: credsKeySecret.properties.secretUriWithVersion identity: appIdentity.id }
         { name: 'creds-iv' keyVaultUrl: credsIvSecret.properties.secretUriWithVersion identity: appIdentity.id }
@@ -234,6 +251,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
           { name: 'NODE_ENV' value: 'production' }
           { name: 'HOST' value: '0.0.0.0' }
           { name: 'TRUST_PROXY' value: '1' }
+          { name: 'CONFIG_PATH' value: '/app/config/librechat.yaml' }
           { name: 'AZURE_STORAGE_ACCOUNT_NAME' value: storage.name }
           { name: 'AZURE_CONTAINER_NAME' value: 'files' }
           { name: 'AZURE_STORAGE_PUBLIC_ACCESS' value: 'false' }
@@ -241,6 +259,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
           { name: 'CREDS_KEY' secretRef: 'creds-key' }
           { name: 'CREDS_IV' secretRef: 'creds-iv' }
           { name: 'JWT_SECRET' secretRef: 'jwt-secret' }
+        ]
+        volumeMounts: [
+          { volumeName: 'config' mountPath: '/app/config' }
         ]
         resources: { cpu: 1.0 memory: '2Gi' }
         probes: [
@@ -254,9 +275,17 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
         maxReplicas: maxReplicas
         rules: [{ name: 'http-concurrency' http: { metadata: { concurrentRequests: '50' } } }]
       }
+      volumes: [
+        {
+          name: 'config'
+          storageType: 'Secret'
+          secrets: [
+            { secretRef: 'librechat-config' path: 'librechat.yaml' }
+          ]
+        }
+      ]
     }
   }
-  dependsOn: [appAcrPull appBlobContributor appSecretReader]
 }
 
 output containerAppUrl string = deployApp ? 'https://${app.properties.configuration.ingress.fqdn}' : ''

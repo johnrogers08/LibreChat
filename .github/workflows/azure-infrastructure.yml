@@ -1,0 +1,37 @@
+name: Azure Infrastructure Validation
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/azure-infrastructure.yml'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/deploy.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/azure-infrastructure.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Bicep
+        uses: azure/setup-bicep@v2
+
+      - name: Compile infrastructure
+        run: bicep build infra/main.bicep --outfile /tmp/librechat-infra.json

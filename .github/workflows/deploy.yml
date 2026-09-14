@@ -44,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Login to Azure using GitHub OIDC
         uses: azure/login@v3
@@ -79,6 +81,8 @@ jobs:
               resourceSuffix="$AZURE_RESOURCE_SUFFIX" \
               imageTag="${{ steps.image.outputs.tag }}" \
               deployApp=true \
+              assignAppRoles=false \
+              assignDeploymentRoles=false \
               githubRepository="$GITHUB_REPOSITORY" \
               mongoUri="${{ secrets.MONGO_URI }}" \
               credsKey="${{ secrets.CREDS_KEY }}" \

@@ -6,6 +6,8 @@
     "resourceSuffix": { "value": "replace-me" },
     "imageTag": { "value": "bootstrap" },
     "deployApp": { "value": false },
+    "assignAppRoles": { "value": true },
+    "assignDeploymentRoles": { "value": true },
     "githubRepository": { "value": "your-org/LibreChat" }
   }
 }
