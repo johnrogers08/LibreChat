@@ -48,9 +48,11 @@ jobs:
 
       - name: Resolve image tag
         id: image
+        env:
+          MANUAL_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || '' }}
         run: |
           set -euo pipefail
-          input_tag="${{ inputs.image_tag }}"
+          input_tag="$MANUAL_IMAGE_TAG"
           input_tag="$(printf '%s' "$input_tag" | xargs)"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$input_tag" ]; then
             tag="$input_tag"
@@ -61,6 +63,17 @@ jobs:
             tag="dev-latest"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Azure Container App exists
+        run: |
+          set -euo pipefail
+          if ! az containerapp show \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null; then
+            echo "Azure Container App $AZURE_CONTAINER_APP_NAME was not found in resource group $AZURE_RESOURCE_GROUP." >&2
+            echo "Provision the Container App before running this deployment workflow." >&2
+            exit 1
+          fi
 
       - name: Deploy latest LibreChat revision
         env:
