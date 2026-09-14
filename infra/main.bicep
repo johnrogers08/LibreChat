@@ -289,6 +289,15 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
 }
 
 output containerAppUrl string = deployApp ? 'https://${app.properties.configuration.ingress.fqdn}' : ''
+output containerAppName string = appName
+output containerAppsEnvironmentName string = environment.name
 output containerRegistryName string = registry.name
-output deploymentIdentityClientId string = deploymentIdentity.properties.clientId
+output containerRegistryLoginServer string = registry.properties.loginServer
+output logAnalyticsWorkspaceName string = workspace.name
 output keyVaultName string = vault.name
+output storageAccountName string = storage.name
+output storageContainerName string = files.name
+output appIdentityName string = appIdentity.name
+output appIdentityClientId string = appIdentity.properties.clientId
+output deploymentIdentityName string = deploymentIdentity.name
+output deploymentIdentityClientId string = deploymentIdentity.properties.clientId
