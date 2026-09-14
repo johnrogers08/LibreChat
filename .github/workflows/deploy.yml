@@ -97,8 +97,24 @@ jobs:
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --system-assigned \
             --output none
-          principal_id="$(az containerapp show --name "$AZURE_CONTAINER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query identity.principalId -o tsv)"
-          acr_id="$(az acr show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query id -o tsv)"
+          principal_file="$(mktemp)"
+          acr_file="$(mktemp)"
+          az containerapp show \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query identity.principalId \
+            -o tsv > "$principal_file" &
+          principal_pid=$!
+          az acr show \
+            --name "$AZURE_CONTAINER_REGISTRY_NAME" \
+            --query id \
+            -o tsv > "$acr_file" &
+          acr_pid=$!
+          wait "$principal_pid"
+          wait "$acr_pid"
+          principal_id="$(cat "$principal_file")"
+          acr_id="$(cat "$acr_file")"
+          rm -f "$principal_file" "$acr_file"
           assignment_count="$(az role assignment list --assignee-object-id "$principal_id" --scope "$acr_id" --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv)"
           if [ "$assignment_count" = "0" ]; then
             az role assignment create \
@@ -114,6 +130,15 @@ jobs:
             --server "$REGISTRY_SERVER" \
             --identity system \
             --output none
+
+      - name: Verify image tag exists in Azure Container Registry
+        run: |
+          set -euo pipefail
+          tag_count="$(az acr repository show-tags --name "$AZURE_CONTAINER_REGISTRY_NAME" --repository "$IMAGE_NAME" --query "[?@=='${{ steps.image.outputs.tag }}'] | length(@)" -o tsv)"
+          if [ "$tag_count" = "0" ]; then
+            echo "Image tag ${{ steps.image.outputs.tag }} was not found for repository $IMAGE_NAME in $AZURE_CONTAINER_REGISTRY_NAME." >&2
+            exit 1
+          fi
 
       - name: Deploy latest LibreChat revision
         env:
