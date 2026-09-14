@@ -84,7 +84,11 @@ jobs:
               assignAppRoles=false \
               assignDeploymentRoles=false \
               githubRepository="$GITHUB_REPOSITORY" \
-              mongoUri="${{ secrets.MONGO_URI }}" \
+              entraTenantId="${{ vars.ENTRA_TENANT_ID }}" \
+              entraClientId="${{ vars.ENTRA_CLIENT_ID }}" \
+              entraClientSecret="${{ secrets.ENTRA_CLIENT_SECRET }}" \
+              openIdSessionSecret="${{ secrets.OPENID_SESSION_SECRET }}" \
+              mongoAdminPassword="${{ secrets.MONGO_ADMIN_PASSWORD }}" \
               credsKey="${{ secrets.CREDS_KEY }}" \
               credsIv="${{ secrets.CREDS_IV }}" \
               jwtSecret="${{ secrets.JWT_SECRET }}" \

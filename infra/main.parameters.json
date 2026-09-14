@@ -8,6 +8,11 @@
     "deployApp": { "value": false },
     "assignAppRoles": { "value": true },
     "assignDeploymentRoles": { "value": true },
-    "githubRepository": { "value": "your-org/LibreChat" }
+    "githubRepository": { "value": "your-org/LibreChat" },
+    "entraTenantId": { "value": "00000000-0000-0000-0000-000000000000" },
+    "entraClientId": { "value": "00000000-0000-0000-0000-000000000000" },
+    "entraClientSecret": { "value": "set-at-deployment" },
+    "openIdSessionSecret": { "value": "set-at-deployment" },
+    "mongoAdminPassword": { "value": "set-at-deployment" }
   }
 }

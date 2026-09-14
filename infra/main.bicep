@@ -21,9 +21,23 @@ param assignDeploymentRoles bool = true
 @description('GitHub repository allowed to obtain Azure deployment tokens, in owner/repository form.')
 param githubRepository string
 
+@description('Microsoft Entra tenant ID used for LibreChat user authentication.')
+param entraTenantId string
+
+@description('Microsoft Entra application (client) ID used for LibreChat user authentication.')
+param entraClientId string
+
 @secure()
-@description('MongoDB Atlas connection URI stored as a Key Vault secret.')
-param mongoUri string
+@description('Client secret for the Microsoft Entra application registration.')
+param entraClientSecret string
+
+@secure()
+@description('Session secret used for OpenID Connect authentication state.')
+param openIdSessionSecret string
+
+@secure()
+@description('Password for the Cosmos DB for MongoDB vCore administrator login.')
+param mongoAdminPassword string
 
 @secure()
 @description('LibreChat session-encryption key stored as a Key Vault secret.')
@@ -53,6 +67,9 @@ var deploymentIdentityName = take('${prefix}-github-id', 128)
 var vaultName = take('${prefix}-kv', 24)
 var storageName = take('${prefix}store', 24)
 var workspaceName = take('${prefix}-logs', 63)
+var mongoClusterName = take('${prefix}-mongo', 40)
+var mongoAdministratorLogin = 'librechat_app'
+var appDomain = 'https://${appName}.${environment.properties.defaultDomain}'
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: workspaceName
@@ -130,10 +147,40 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
+resource mongoCluster 'Microsoft.DocumentDB/mongoClusters@2024-07-01' = {
+  name: mongoClusterName
+  location: location
+  properties: {
+    administratorLogin: mongoAdministratorLogin
+    administratorLoginPassword: mongoAdminPassword
+    serverVersion: '8.0'
+    nodeGroupSpecs: [
+      {
+        kind: 'Shard'
+        sku: 'M30'
+        diskSizeGB: 32
+        nodeCount: 3
+      }
+    ]
+  }
+}
+
 resource mongoUriSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: vault
   name: 'mongo-uri'
-  properties: { value: mongoUri }
+  properties: { value: mongoCluster.properties.connectionString }
+}
+
+resource entraClientSecretSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: vault
+  name: 'entra-client-secret'
+  properties: { value: entraClientSecret }
+}
+
+resource openIdSessionSecretValue 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: vault
+  name: 'openid-session-secret'
+  properties: { value: openIdSessionSecret }
 }
 
 resource credsKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
@@ -237,7 +284,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
       registries: [{ server: registry.properties.loginServer identity: appIdentity.id }]
       secrets: [
         { name: 'librechat-config' value: loadTextContent('librechat.azure.yaml') }
+        { name: 'entra-client-secret' keyVaultUrl: entraClientSecretSecret.properties.secretUriWithVersion identity: appIdentity.id }
         { name: 'mongo-uri' keyVaultUrl: mongoUriSecret.properties.secretUriWithVersion identity: appIdentity.id }
+        { name: 'openid-session-secret' keyVaultUrl: openIdSessionSecretValue.properties.secretUriWithVersion identity: appIdentity.id }
         { name: 'creds-key' keyVaultUrl: credsKeySecret.properties.secretUriWithVersion identity: appIdentity.id }
         { name: 'creds-iv' keyVaultUrl: credsIvSecret.properties.secretUriWithVersion identity: appIdentity.id }
         { name: 'jwt-secret' keyVaultUrl: jwtSecretSecret.properties.secretUriWithVersion identity: appIdentity.id }
@@ -251,7 +300,17 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
           { name: 'NODE_ENV' value: 'production' }
           { name: 'HOST' value: '0.0.0.0' }
           { name: 'TRUST_PROXY' value: '1' }
+          { name: 'DOMAIN_CLIENT' value: appDomain }
+          { name: 'DOMAIN_SERVER' value: appDomain }
           { name: 'CONFIG_PATH' value: '/app/config/librechat.yaml' }
+          { name: 'OPENID_CLIENT_ID' value: entraClientId }
+          { name: 'OPENID_ISSUER' value: 'https://login.microsoftonline.com/${entraTenantId}/v2.0' }
+          { name: 'OPENID_SCOPE' value: 'openid profile email' }
+          { name: 'OPENID_CALLBACK_URL' value: '/oauth/openid/callback' }
+          { name: 'OPENID_EMAIL_CLAIM' value: 'preferred_username' }
+          { name: 'OPENID_BUTTON_LABEL' value: 'Sign in with Microsoft' }
+          { name: 'OPENID_CLIENT_SECRET' secretRef: 'entra-client-secret' }
+          { name: 'OPENID_SESSION_SECRET' secretRef: 'openid-session-secret' }
           { name: 'AZURE_STORAGE_ACCOUNT_NAME' value: storage.name }
           { name: 'AZURE_CONTAINER_NAME' value: 'files' }
           { name: 'AZURE_STORAGE_PUBLIC_ACCESS' value: 'false' }
@@ -301,3 +360,7 @@ output appIdentityName string = appIdentity.name
 output appIdentityClientId string = appIdentity.properties.clientId
 output deploymentIdentityName string = deploymentIdentity.name
 output deploymentIdentityClientId string = deploymentIdentity.properties.clientId
+output mongoClusterName string = mongoCluster.name
+output mongoAdministratorLogin string = mongoAdministratorLogin
+output mongoDatabaseName string = 'LibreChat'
+output entraRedirectUri string = '${appDomain}/oauth/openid/callback'
