@@ -87,6 +87,20 @@ jobs:
             esac
           fi
 
+      - name: Refresh Azure Container Registry credentials
+        env:
+          REGISTRY_SERVER: ${{ steps.acr.outputs.login_server }}
+        run: |
+          set -euo pipefail
+          registry_user="$(az acr credential show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query username -o tsv)"
+          registry_secret="$(az acr credential show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query 'passwords[0].value' -o tsv)"
+          az containerapp registry set \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --server "$REGISTRY_SERVER" \
+            --username "$registry_user" \
+            --password "$registry_secret"
+
       - name: Deploy latest LibreChat revision
         env:
           IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
