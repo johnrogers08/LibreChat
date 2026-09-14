@@ -60,6 +60,8 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          cache-from: type=gha,scope=azure-librechat
+          cache-to: type=gha,mode=max,scope=azure-librechat
           tags: |
             ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
             ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.latest_tag }}

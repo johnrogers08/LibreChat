@@ -87,19 +87,33 @@ jobs:
             esac
           fi
 
-      - name: Refresh Azure Container Registry credentials
+      - name: Configure managed identity for image pulls
         env:
           REGISTRY_SERVER: ${{ steps.acr.outputs.login_server }}
         run: |
           set -euo pipefail
-          registry_user="$(az acr credential show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query username -o tsv)"
-          registry_secret="$(az acr credential show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query 'passwords[0].value' -o tsv)"
+          az containerapp identity assign \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --system-assigned \
+            --output none
+          principal_id="$(az containerapp show --name "$AZURE_CONTAINER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query identity.principalId -o tsv)"
+          acr_id="$(az acr show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query id -o tsv)"
+          assignment_count="$(az role assignment list --assignee-object-id "$principal_id" --scope "$acr_id" --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv)"
+          if [ "$assignment_count" = "0" ]; then
+            az role assignment create \
+              --assignee-object-id "$principal_id" \
+              --assignee-principal-type ServicePrincipal \
+              --role AcrPull \
+              --scope "$acr_id" \
+              --output none
+          fi
           az containerapp registry set \
             --name "$AZURE_CONTAINER_APP_NAME" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --server "$REGISTRY_SERVER" \
-            --username "$registry_user" \
-            --password "$registry_secret"
+            --identity system \
+            --output none
 
       - name: Deploy latest LibreChat revision
         env:
