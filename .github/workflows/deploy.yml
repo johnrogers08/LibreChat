@@ -50,8 +50,10 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
-            tag="${{ inputs.image_tag }}"
+          input_tag="${{ inputs.image_tag }}"
+          input_tag="$(printf '%s' "$input_tag" | xargs)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$input_tag" ]; then
+            tag="$input_tag"
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
             tag="${{ github.event.workflow_run.head_sha }}"
             tag="${tag::12}"
